@@ -4,3 +4,5 @@
 /rest-server/.venv/
 /spark/.idea/
 /spark/.venv/
+/python-non-parallel/.idea/
+/python-non-parallel/.venv/
