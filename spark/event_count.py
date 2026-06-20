@@ -17,13 +17,13 @@ if __name__ == "__main__":
     # apply MapReduce
     lines = sc.textFile(sys.argv[1])
     event_dicts = lines.flatMap(lambda x: json.loads(x))
-    repo_events = event_dicts.map(lambda x: (f"{x['repo']['id']}, {x['create_at']}, {x['type']}", 1))
+    repo_events = event_dicts.map(lambda x: (f"{x['repo']['id']}, {x['created_at'].split("T")[0]}, {x['type']}", 1))
     counts = repo_events.reduceByKey(lambda x, y: x + y)
 
     # repartition(1) returns an RDD consisting of 1 partition
     counts.repartition(1).saveAsTextFile(sys.argv[2])
 
     # example of result:
-    # ('repo.id, create_at, type', count)
+    # ('repo.id, created_at, type', count)
     # ('12345, 2011-09-06T17:26:27Z, WatchEvent', 5)
 
