@@ -19,7 +19,7 @@ def read_files_recursive(directory: str):
 def extra_event_count_line_key(line: str) -> Optional[str]:
     event_dict = json.loads(line)
     try:
-        return f"{event_dict['repo']['id']}, {event_dict['created_at'].split("T")[0]}, {event_dict['type']}"
+        return f"{event_dict['repo']['id']}, {event_dict['created_at'].split('T')[0]}, {event_dict['type']}"
     except Exception as e:
         print(f"Error reading {line}: {e}")
     return None
