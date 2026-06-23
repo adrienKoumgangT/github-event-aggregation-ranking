@@ -23,7 +23,7 @@ public class EventCountMapper extends Mapper<LongWritable, Text, Text, IntWritab
                 JSONObject jsonl = new JSONObject(value.toString());
 
                 String eventType = jsonl.getString("type");
-                String createdAt = jsonl.getString("created_at");
+                String createdAt = jsonl.getString("created_at").split("T")[0];
 
                 JSONObject repo = jsonl.getJSONObject("repo");
                 long repoId = repo.getLong("id");
