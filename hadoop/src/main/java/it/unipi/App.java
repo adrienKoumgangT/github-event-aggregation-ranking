@@ -12,6 +12,12 @@ public class App
 {
     public static void main( String[] args ) throws Exception
     {
+        // check number of args
+        if (args.length != 3) {
+            System.err.println("Error: Wrong number of arguments provided.");
+            System.err.println("Usage: hadoop jar <jar_name>.jar it.unipi.App <input_path> <intermediate_path> <final_output_path>");
+            System.exit(1);
+        }
 
         Configuration conf = new Configuration();
 
@@ -31,7 +37,11 @@ public class App
         FileOutputFormat.setOutputPath(job, new Path(args[1]));
 
         //System.exit(job.waitForCompletion(true) ? 0 : 1);
-        if (job.waitForCompletion(true)) {
+
+        boolean job1Success = job.waitForCompletion(true);
+        if (!job1Success) { System.exit(1); }
+
+        else {
             Configuration conf2 = new Configuration();
             conf2.setInt("top.n.value", 5); // defauly N
 
@@ -44,7 +54,7 @@ public class App
             job2.setOutputKeyClass(Text.class);
             job2.setOutputValueClass(Text.class);
 
-            FileInputFormat.addInputPath(job2, new Path(args[1]));
+            FileInputFormat.addInputPath(job2, new Path(args[1] + "/part*"));
             FileOutputFormat.setOutputPath(job2, new Path(args[2]));
 
             System.exit(job2.waitForCompletion(true) ? 0 : 1);

@@ -11,18 +11,18 @@ public class TopEventsMapper extends Mapper<LongWritable, Text, Text, Text> {
 
     @Override
     public void map(LongWritable key, Text value, Context context) throws IOException, InterruptedException {
-        // Convert line to string: "repoId,createdAt,eventType\tcount"
-        String line = value.toString();
+        // Convert line to string: "repoId,createdAt,eventType count"
+        String line = value.toString().trim();
 
-        // Split by Tab to separate Job 1's key from value
-        String[] parts = line.split("\t");
+        // Split by one or more spaces to separate Job 1's key from value
+        String[] parts = line.split("\\s+");
         if (parts.length != 2) return; // to skip incorrect rowa
 
-        String compsiteKey = parts[0]; // repoId, created_at, eventType
-        String count = parts[1];
+        String compositeKey = parts[0].trim(); // repoId, created_at, eventType
+        String count = parts[1].trim(); // count
 
         // Split composit key by coma
-        String[] tokens = compsiteKey.split(",");
+        String[] tokens = compositeKey.split(",");
         if (tokens.length == 3) {
             String date = tokens[1].trim();
             String eventType = tokens[2].trim();
