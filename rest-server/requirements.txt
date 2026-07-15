@@ -1,3 +1,5 @@
 Flask
 flask-restx
 flask-cors
+pyyaml
+requests
