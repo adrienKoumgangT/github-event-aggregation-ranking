@@ -1,22 +1,23 @@
-from flask import Flask, Blueprint, render_template_string, request, abort, Response
+from flask import Flask
 from flask_cors import CORS
 from flask_restx import Api
+from config.settings import Config
+from database import init_db
+from config.logger import setup_logger
+import logging
 
-from src.config.settings import Config
-from routes.job_endpoint import ns_job
 
+logger = setup_logger('app')
 
 def create_app():
     app = Flask(__name__)
 
-    # app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024  # 100MB
-    app.config["DEBUG"] = Config.DEBUG
-
+    # Enable CORS for all routes and origins
     CORS(
         app,
         resources={r"/*": {"origins": "*"}},
         supports_credentials=True,
-        methods=["GET", "POST", "PUT", "PATCH", "HEAD", "PUT", "DELETE", "OPTIONS"],
+        methods=["GET", "POST", "PUT", "PATCH", "HEAD", "DELETE", "OPTIONS"],
         allow_headers=[
             'Content-Type',
             'Access-Control-Allow-Origin',
@@ -44,69 +45,104 @@ def create_app():
         ]
     )
 
-    @app.route("/")
-    def index():
-        return render_template_string("""
-                <html>
-                <head>
-                    <title>Smart News Aggregator</title>
-                    <style>
-                        body { font-family: sans-serif; margin: 5em; background: #f4f4f4; }
-                        .container { background: white; padding: 2em; border-radius: 8px; max-width: 600px; }
-                        h1 { color: #2b3e50; }
-                        a.button {
-                            display: inline-block;
-                            padding: 10px 20px;
-                            background: #007BFF;
-                            color: white;
-                            text-decoration: none;
-                            border-radius: 5px;
-                            margin-top: 1em;
-                        }
-                        a.button:hover { background: #0056b3; }
-                    </style>
-                </head>
-                <body>
-                    <div class="container">
-                        <h1>Welcome to Smart News Aggregator API</h1>
-                        <p>This platform provides intelligent news aggregation, personalization, and recommendation features powered by Flask, MongoDB, Redis, and JWT-secured endpoints.</p>
-                        <a class="button" href="/api/docs">Go to Swagger</a>
-                    </div>
-                </body>
-                </html>
-            """)
+    # Configure Flask logging
+    app.logger.handlers = logger.handlers
+    app.logger.setLevel(logger.level)
 
-    """
-    authorizations = {
-        'BearerAuth': {
-            'type': 'apiKey',
-            'in': 'header',
-            'name': 'Authorization',
-            'description': "JWT token with format: **Bearer &lt;token&gt;**"
-        }
-    }
-    """
+    # Log startup
+    logger.info("Starting YARN Cluster Management API")
+    logger.info(f"Debug mode: {Config.DEBUG}")
+    logger.info(f"YARN RM URL: {Config.YARN_RM_URL}")
 
-    blueprint = Blueprint('api', __name__, url_prefix='/api')
+    # Configure Flask
+    app.config['SWAGGER_UI_DOC_EXPANSION'] = 'list'
+    app.config['RESTX_MASK_SWAGGER'] = False
+    app.config['SQLALCHEMY_DATABASE_URI'] = Config.DATABASE_URL
+    app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = Config.SQLALCHEMY_TRACK_MODIFICATIONS
+
+    # Initialize database
+    try:
+        init_db(app)
+        logger.info("Database initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize database: {e}")
+        raise
+
+    # Create API with Swagger
     api = Api(
-        blueprint,
-        title="Smart News Aggregator API",
-        description="Articles from extern api",
-        version="1.0",
-        doc='/docs/',
-        # authorizations=authorizations,
-        # security="BearerAuth"  # Apply to all routes unless overridden
+        app,
+        version='1.0',
+        title='YARN Cluster Management API',
+        description='REST API for managing Hadoop/Spark jobs on YARN cluster',
+        doc='/docs',
+        prefix='/api'
     )
 
-    api.add_namespace(ns_job, path='/jobs')
+    # Register namespaces
+    try:
+        from namespaces.cluster.namespace import cluster_ns
+        from namespaces.applications.namespace import applications_ns
+        from namespaces.jobs.namespace import jobs_ns
+        from namespaces.nodes.namespace import nodes_ns
 
-    app.register_blueprint(blueprint)
+        api.add_namespace(cluster_ns)
+        api.add_namespace(applications_ns)
+        api.add_namespace(jobs_ns)
+        api.add_namespace(nodes_ns)
+
+        logger.info("All namespaces registered successfully")
+    except Exception as e:
+        logger.error(f"Failed to register namespaces: {e}")
+        raise
+
+
+    # Add request logging middleware
+    @app.before_request
+    def log_request_info():
+        from flask import request
+        logger.debug(f"Request: {request.method} {request.url}")
+        if request.is_json:
+            logger.debug(f"Request Body: {request.get_json(silent=True)}")
+
+    @app.after_request
+    def log_response_info(response):
+        logger.debug(f"Response: {response.status} {response.status_code}")
+        return response
+
+
+    @app.after_request
+    def add_cors(response):
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, PATCH, HEAD, DELETE, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] =  'Content-Type, Access-Control-Allow-Origin, X-Requested-With, Accept, Origin, Access-Control-Request-method, Access-Control-Request-Headers, Authorization, App-Alert, X-Total-Count, File, Filename, X-File-Name, Cache-Control'
+        return response
+
+
+    # Add error handlers
+    @app.errorhandler(404)
+    def not_found_error(error):
+        logger.warning(f"404 error: {error}")
+        return {'error': 'Resource not found'}, 404
+
+    @app.errorhandler(500)
+    def internal_error(error):
+        logger.error(f"500 error: {error}")
+        return {'error': 'Internal server error'}, 500
+
+
 
     return app
 
 
-application = create_app()
-
-if __name__ == "__main__":
-    application.run(host='0.0.0.0', port=5000, debug=True)
-
+if __name__ == '__main__':
+    try:
+        application = create_app()
+        logger.info(f"Starting server on {Config.HOST}:{Config.PORT}")
+        application.run(
+            host=Config.HOST,
+            port=Config.PORT,
+            debug=Config.DEBUG
+        )
+    except Exception as e:
+        logger.critical(f"Failed to start application: {e}", exc_info=True)
+        raise

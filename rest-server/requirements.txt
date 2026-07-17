@@ -3,3 +3,8 @@ flask-restx
 flask-cors
 pyyaml
 requests
+python-dotenv
+Werkzeug
+SQLAlchemy
+Flask-SQLAlchemy
+alembic
