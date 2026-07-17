@@ -1,3 +1,5 @@
+import json
+import requests
 import time
 from typing import Dict, Any, List, Optional
 import uuid
@@ -89,6 +91,14 @@ class JobService:
             if job_type == JobType.HADOOP.value and not configuration.get('intermediatePath'):
                 configuration['intermediatePath'] = f"{Config.HADOOP_OUTPUT_DIR}/{job_id}_intermediate"
 
+            if 'memory' not in configuration:
+                if job_type == JobType.HADOOP.value:
+                    configuration['memory'] = 1024  # Safe default for your cluster
+                elif job_type == JobType.SPARK.value:
+                    configuration['memory'] = 1024
+                else:
+                    configuration['memory'] = 1024
+
             job_data = {
                 'jobId': job_id,
                 'name': configuration.get('jobName', f'{job_type}_job_{job_id[:8]}'),
@@ -151,6 +161,22 @@ class JobService:
             return {'error': str(e), 'status_code': 500}
 
     @staticmethod
+    def _get_cluster_max_resources() -> Dict[str, int]:
+        """Get maximum resource capabilities from the cluster"""
+        try:
+            new_app = YarnClient.cluster_new_application()
+            if hasattr(new_app, 'maximum_resource_capability'):
+                max_res = new_app.maximum_resource_capability
+                return {
+                    'memory': getattr(max_res, 'memory', 1536),
+                    'vCores': getattr(max_res, 'vCores', 4)
+                }
+        except Exception as e:
+            logger.warning(f"Failed to get cluster max resources: {e}")
+
+        return {'memory': 1536, 'vCores': 4}
+
+    @staticmethod
     def _submit_hadoop_via_yarn(job: Job, config: Dict[str, Any]) -> Dict[str, Any]:
         """Submit a Hadoop MapReduce job via YARN REST API"""
         try:
@@ -180,39 +206,54 @@ class JobService:
             logger.info(f"Hadoop command: {hadoop_command}")
             JobRepository.add_job_log(job_id, f'Command: {hadoop_command}', 'INFO', 'APPLICATION')
 
-            # Get new application ID
+            # Get new application ID (includes cluster max resource info)
             new_app = YarnClient.cluster_new_application()
             if isinstance(new_app, dict) and 'error' in new_app:
                 raise Exception(f"Failed to get new application ID: {new_app.get('error')}")
 
-            application_id = new_app.application_id if hasattr(new_app, 'application_id') else new_app.get(
-                'application-id')
+            application_id = new_app.application_id if hasattr(new_app, 'application_id') else new_app.get('application-id')
 
-            # Minimal AM container spec
-            am_container_spec = {
-                "commands": {
-                    "command": hadoop_command
-                },
-                "environment": {
-                    "entry": [
-                        {"key": "HADOOP_HOME", "value": Config.HADOOP_HOME},
-                        {"key": "HADOOP_CONF_DIR", "value": Config.HADOOP_CONF_DIR}
-                    ]
-                }
-            }
+            # Get max resource capabilities from the response
+            max_memory = 1536
+            max_vcores = 4
 
-            # Build the request body
+            if hasattr(new_app, 'maximum_resource_capability'):
+                max_res = new_app.maximum_resource_capability
+                if hasattr(max_res, 'memory'):
+                    max_memory = max_res.memory
+                if hasattr(max_res, 'vCores'):
+                    max_vcores = max_res.vCores
+
+            # Use requested memory but cap at cluster maximum
+            requested_memory = min(int(config.get('memory', 1024)), max_memory)
+            requested_vcores = min(int(config.get('vCores', 1)), max_vcores)
+
+            logger.info(f"Cluster max - Memory: {max_memory}MB, vCores: {max_vcores}")
+            logger.info(f"Requesting - Memory: {requested_memory}MB, vCores: {requested_vcores}")
+
+            # Build request body
             request_body = {
                 "application-id": application_id,
                 "application-name": f"hadoop_{job_id[:8]}",
                 "queue": job.queue or "default",
                 "priority": job.priority or 0,
-                "am-container-spec": am_container_spec,
+                "am-container-spec": {
+                    "commands": {
+                        "command": hadoop_command
+                    },
+                    "environment": {
+                        "entry": [
+                            {"key": "HADOOP_HOME", "value": Config.HADOOP_HOME},
+                            {"key": "HADOOP_CONF_DIR", "value": Config.HADOOP_CONF_DIR},
+                            {"key": "JAVA_HOME", "value": "/usr/lib/jvm/java-8-openjdk"}
+                        ]
+                    }
+                },
                 "unmanaged-AM": False,
                 "max-app-attempts": 2,
                 "resource": {
-                    "memory": config.get('memory', 1024),
-                    "vCores": config.get('vCores', 1)
+                    "memory": requested_memory,
+                    "vCores": requested_vcores
                 },
                 "application-type": "MAPREDUCE",
                 "keep-containers-across-application-attempts": False,
@@ -221,9 +262,11 @@ class JobService:
                 }
             }
 
-            # Submit directly using requests
-            import requests
+            # Submit to YARN
             url = f"{YarnClient.rm_url}/apps"
+
+            logger.info(f"Submitting to YARN: {json.dumps(request_body, indent=2)}")
+
             response = requests.post(url, json=request_body)
 
             if response.status_code == 202:
@@ -309,7 +352,6 @@ class JobService:
                 }
             }
 
-            import requests
             url = f"{YarnClient.rm_url}/apps"
             response = requests.post(url, json=request_body)
 
@@ -380,7 +422,6 @@ class JobService:
                 "keep-containers-across-application-attempts": False
             }
 
-            import requests
             url = f"{YarnClient.rm_url}/apps"
             response = requests.post(url, json=request_body)
 

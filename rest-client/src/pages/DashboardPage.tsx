@@ -31,7 +31,7 @@ const DashboardPage: React.FC = () => {
         fetchMetrics();
     }, []);
 
-    usePolling(fetchMetrics, 5000);
+    usePolling(fetchMetrics, 60000);
 
     if (loading) return <LoadingSpinner message="Loading dashboard..." />;
     if (error) return <ErrorAlert message={error} onRetry={fetchMetrics} />;

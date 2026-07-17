@@ -12,7 +12,7 @@ interface UseJobStatusReturn {
 
 export function useJobStatus(
     jobId: string | undefined,
-    pollInterval: number = 5000
+    pollInterval: number = 60000
 ): UseJobStatusReturn {
     const [job, setJob] = useState<Job | null>(null);
     const [loading, setLoading] = useState(false);

@@ -54,7 +54,7 @@ const ApplicationDetail: React.FC<ApplicationDetailProps> = ({ applicationId: pr
         fetchApplication();
     }, [appId]);
 
-    usePolling(fetchApplication, 5000, application?.state === 'RUNNING');
+    usePolling(fetchApplication, 60000, application?.state === 'RUNNING');
 
     const handleKill = async () => {
         if (!appId) return;

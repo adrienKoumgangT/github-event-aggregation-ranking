@@ -29,7 +29,7 @@ const NodesPage: React.FC = () => {
         fetchStatistics();
     }, []);
 
-    usePolling(fetchStatistics, 10000);
+    usePolling(fetchStatistics, 60000);
 
     if (loading) return <LoadingSpinner message="Loading nodes..." />;
 

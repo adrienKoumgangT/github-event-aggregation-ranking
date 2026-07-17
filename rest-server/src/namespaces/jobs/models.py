@@ -44,6 +44,7 @@ job_submission_model = Model('JobSubmission', {
 job_status_model = Model('JobStatus', {
     'jobId': fields.String(description='Job ID'),
     'applicationId': fields.String(description='Application ID'),
+    'name': fields.String(description='Job name'),
     'type': fields.String(description='Job type'),
     'status': fields.String(description='Job status'),
     'progress': fields.Float(description='Progress'),

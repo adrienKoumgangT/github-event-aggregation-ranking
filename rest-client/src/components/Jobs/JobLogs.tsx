@@ -59,7 +59,7 @@ const JobLogs: React.FC<JobLogsProps> = ({ jobId, autoRefresh = true }) => {
 
     useEffect(() => {
         if (autoRefresh) {
-            const interval = setInterval(fetchLogs, 5000);
+            const interval = setInterval(fetchLogs, 60000);
             return () => clearInterval(interval);
         }
     }, [autoRefresh, jobId, logLevel]);

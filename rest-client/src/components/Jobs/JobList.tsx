@@ -47,7 +47,7 @@ const JobList: React.FC = () => {
 
     useEffect(() => {
         fetchJobs();
-        const interval = setInterval(fetchJobs, 10000);
+        const interval = setInterval(fetchJobs, 60000);
         return () => clearInterval(interval);
     }, []);
 
@@ -65,9 +65,9 @@ const JobList: React.FC = () => {
 
     const filteredJobs = jobs.filter((job) => {
         const matchesSearch =
-            job.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            job.jobId.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            (job.applicationId && job.applicationId.toLowerCase().includes(searchTerm.toLowerCase()));
+            (job.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+            (job.jobId || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+            (job.applicationId || '').toLowerCase().includes(searchTerm.toLowerCase());
 
         const matchesStatus = statusFilter === 'ALL' || job.status === statusFilter;
         const matchesType = typeFilter === 'ALL' || job.type === typeFilter;
@@ -118,11 +118,6 @@ const JobList: React.FC = () => {
                     <span>{value.toFixed(1)}%</span>
                 </Box>
             ),
-        },
-        {
-            id: 'user',
-            label: 'User',
-            minWidth: 80,
         },
         {
             id: 'createdAt',

@@ -1,4 +1,4 @@
-from flask import Flask
+from flask import Flask, request, make_response
 from flask_cors import CORS
 from flask_restx import Api
 from config.settings import Config
@@ -99,10 +99,19 @@ def create_app():
     # Add request logging middleware
     @app.before_request
     def log_request_info():
-        from flask import request
         logger.debug(f"Request: {request.method} {request.url}")
         if request.is_json:
             logger.debug(f"Request Body: {request.get_json(silent=True)}")
+
+    @app.before_request
+    def handle_preflight():
+        if request.method == "OPTIONS":
+            response = make_response()
+            response.headers.add("Access-Control-Allow-Origin", "*")
+            response.headers.add("Access-Control-Allow-Headers", "Content-Type,Authorization,Accept")
+            response.headers.add("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS,PATCH")
+            response.headers.add("Access-Control-Max-Age", "3600")
+            return response, 200
 
     @app.after_request
     def log_response_info(response):

@@ -41,7 +41,7 @@ const ApplicationList: React.FC = () => {
 
     useEffect(() => {
         fetchApplications();
-        const interval = setInterval(fetchApplications, 10000);
+        const interval = setInterval(fetchApplications, 60000);
         return () => clearInterval(interval);
     }, []);
 
