@@ -66,7 +66,7 @@ class Config:
     YARN_RM_URL = f"http://{YARN_RM_HOST}:{YARN_RM_PORT}"
 
     # Paths Configuration
-    BASE_DIR = Path(__file__).parent.parent
+    BASE_DIR = Path(__file__).parent.parent.parent
     JOBS_DIR = Path(get_env_var('JOBS_DIR', default=str(BASE_DIR / 'data' / 'jobs'), var_type=str))
     RESULTS_DIR = Path(get_env_var('RESULTS_DIR', default=str(BASE_DIR / 'data' / 'results'), var_type=str))
     LOG_DIR = Path(get_env_var('LOG_DIR', default=str(BASE_DIR / 'logs'), var_type=str))
@@ -80,8 +80,8 @@ class Config:
         var_type=str
     )
     HADOOP_MAIN_CLASS = get_env_var('HADOOP_MAIN_CLASS', default='it.unipi.App', var_type=str)
-    HADOOP_INPUT_DIR = get_env_var('HADOOP_INPUT_DIR', default='/input', var_type=str)
-    HADOOP_OUTPUT_DIR = get_env_var('HADOOP_OUTPUT_DIR', default='/output', var_type=str)
+    HADOOP_INPUT_DIR = get_env_var('HADOOP_INPUT_DIR', default='github-events/', var_type=str)
+    HADOOP_OUTPUT_DIR = get_env_var('HADOOP_OUTPUT_DIR', default='github-events-output/hadoop/', var_type=str)
 
     # Spark Configuration
     SPARK_HOME = get_env_var('SPARK_HOME', default='/opt/spark', var_type=str)
