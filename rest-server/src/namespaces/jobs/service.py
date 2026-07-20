@@ -88,8 +88,8 @@ class JobService:
             # Create job in database
             job_id = data.get('jobId', str(uuid.uuid4()))
 
-            if job_type == JobType.HADOOP.value and not configuration.get('intermediatePath'):
-                configuration['intermediatePath'] = f"{Config.HADOOP_OUTPUT_DIR}/{job_id}_intermediate"
+            # if job_type == JobType.HADOOP.value and not configuration.get('intermediatePath'):
+                # configuration['intermediatePath'] = f"{Config.HADOOP_OUTPUT_DIR}/{job_id}_intermediate"
 
             if 'memory' not in configuration:
                 if job_type == JobType.HADOOP.value:
@@ -103,7 +103,7 @@ class JobService:
                 'jobId': job_id,
                 'name': configuration.get('jobName', f'{job_type}_job_{job_id[:8]}'),
                 'type': job_type,
-                'user': data.get('user', 'anonymous'),
+                'user': data.get('user', 'hadoop'),
                 'queue': data.get('queue', 'default'),
                 'priority': data.get('priority', 0),
                 'memory': configuration.get('memory', 1024),
@@ -181,33 +181,82 @@ class JobService:
         """Submit a Hadoop MapReduce job via YARN REST API"""
         try:
             job_id = job.id
+            user = job.user or 'hadoop'
+
+            java_home = "/usr/lib/jvm/java-8-openjdk"
+            hadoop_home = Config.HADOOP_HOME
 
             jar_path = config.get('jarPath', Config.HADOOP_JAR_PATH)
-            main_class = config.get('mainClass', Config.HADOOP_MAIN_CLASS)
-            input_path = config.get('inputPath', Config.HADOOP_INPUT_DIR)
-            output_path = config.get('outputPath', f"{Config.HADOOP_OUTPUT_DIR}/{job_id}")
-            top_n = config.get('topN', 10)
-            intermediate_path = config.get('intermediatePath', f"{Config.HADOOP_OUTPUT_DIR}/{job_id}_intermediate")
 
-            # Build the command
-            hadoop_command = (
-                f"{{HADOOP_HOME}}/bin/hadoop jar "
-                f"{jar_path} "
+            main_class = config.get('mainClass', Config.HADOOP_MAIN_CLASS)
+            top_n = config.get('topN', 5)
+
+            input_path = config.get('inputPath', Config.HADOOP_INPUT_DIR)
+            # Add hdfs:// prefix if not present
+            if not input_path.startswith('hdfs://'):
+                if input_path.startswith('/'):
+                    input_path = f"hdfs://hadoop-namenode:9820{input_path}"
+                else:
+                    input_path = f"hdfs://hadoop-namenode:9820/user/hadoop/{input_path}"
+
+            output_dir = config.get('outputPath', Config.HADOOP_OUTPUT_DIR)
+            if not output_dir.endswith("/"):
+                output_dir += "/"
+            if not output_dir.startswith('hdfs://'):
+                if output_dir.startswith('/'):
+                    output_dir = f"hdfs://hadoop-namenode:9820{output_dir}"
+                else:
+                    output_dir = f"hdfs://hadoop-namenode:9820/user/hadoop/{output_dir}"
+            output_path = f"{output_dir}{job_id}/top-events"
+            intermediate_path = f"{output_dir}{job_id}/event-count"
+
+            # Build classpath
+            classpath = (
+                "./AppMaster.jar:"
+                "{{HADOOP_HOME}}/share/hadoop/common/*:"
+                "{{HADOOP_HOME}}/share/hadoop/common/lib/*:"
+                "{{HADOOP_HOME}}/share/hadoop/mapreduce/*:"
+                "{{HADOOP_HOME}}/share/hadoop/mapreduce/lib/*:"
+                "{{HADOOP_HOME}}/share/hadoop/yarn/*:"
+                "{{HADOOP_HOME}}/share/hadoop/yarn/lib/*:"
+                "{{HADOOP_HOME}}/share/hadoop/hdfs/*:"
+                "{{HADOOP_HOME}}/share/hadoop/hdfs/lib/*"
+            )
+
+            # IMPORTANT: Use java directly, NOT hadoop jar
+            command = (
+                f"java "
+                f"-cp {classpath} "
                 f"{main_class} "
                 f"{top_n} "
                 f"{input_path} "
                 f"{intermediate_path} "
-                f"{output_path}"
+                f"{output_path} "
             )
+
+            # Build the command
+            hadoop_command = (
+                "{{HADOOP_HOME}}/bin/hadoop jar "
+                # f"{jar_path} "
+                f"./AppMaster.jar "
+                f"{main_class} "
+                f"{top_n} "
+                f"{input_path} "
+                f"{intermediate_path} "
+                f"{output_path} "
+            )
+
+            hadoop_command = command
 
             if config.get('arguments'):
                 hadoop_command += " " + " ".join(config['arguments'])
 
             logger.info(f"Hadoop command: {hadoop_command}")
+            logger.info(f"User: {user}, JAR: {jar_path}")
             JobRepository.add_job_log(job_id, f'Command: {hadoop_command}', 'INFO', 'APPLICATION')
 
             # Get new application ID (includes cluster max resource info)
-            new_app = YarnClient.cluster_new_application()
+            new_app = YarnClient.cluster_new_application(user=user)
             if isinstance(new_app, dict) and 'error' in new_app:
                 raise Exception(f"Failed to get new application ID: {new_app.get('error')}")
 
@@ -237,37 +286,58 @@ class JobService:
                 "application-name": f"hadoop_{job_id[:8]}",
                 "queue": job.queue or "default",
                 "priority": job.priority or 0,
+                "user": "hadoop",
                 "am-container-spec": {
+                    "local-resources": {
+                        "entry": [
+                            {
+                                "key": "AppMaster.jar",
+                                "value": {
+                                    "resource": f"{jar_path}", # "hdfs://hadoop-namenode:9820/user/hadoop/jars/hadoop-1.0-SNAPSHOT.jar",
+                                    "type": "FILE",
+                                    "visibility": "APPLICATION",
+                                    "size": 0, # "size": 9598,
+                                    "timestamp": 1784397010123
+                                }
+                            }
+                        ]
+                    },
                     "commands": {
                         "command": hadoop_command
                     },
                     "environment": {
                         "entry": [
-                            {"key": "HADOOP_HOME", "value": Config.HADOOP_HOME},
-                            {"key": "HADOOP_CONF_DIR", "value": Config.HADOOP_CONF_DIR},
-                            {"key": "JAVA_HOME", "value": "/usr/lib/jvm/java-8-openjdk"}
+                            {"key": "HADOOP_HOME", "value": hadoop_home},
+                            {"key": "HADOOP_CONF_DIR", "value": f"{hadoop_home}/etc/hadoop"},
+                            {"key": "JAVA_HOME", "value": "/usr/lib/jvm/java-8-openjdk"},
+                            {"key": "HADOOP_USER_NAME", "value": user},
+                            {"key": "PATH", "value": f"{hadoop_home}/bin:/usr/local/bin:/usr/bin:/bin"}
                         ]
                     }
                 },
                 "unmanaged-AM": False,
-                "max-app-attempts": 2,
+                "max-app-attempts": 1,
                 "resource": {
-                    "memory": requested_memory,
-                    "vCores": requested_vcores
+                    "memory": 512,
+                    "vCores": 1
                 },
                 "application-type": "MAPREDUCE",
-                "keep-containers-across-application-attempts": False,
                 "application-tags": {
-                    "tag": ["hadoop", "mapreduce"]
+                    "tag": ["hadoop", "mapreduce", job_id[:8]]
                 }
             }
 
             # Submit to YARN
-            url = f"{YarnClient.rm_url}/apps"
+            url = f"{YarnClient.rm_url}/apps?user.name={user}"
 
             logger.info(f"Submitting to YARN: {json.dumps(request_body, indent=2)}")
+            headers = {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'user.name': 'hadoop',
+            }
 
-            response = requests.post(url, json=request_body)
+            response = requests.post(url, json=request_body, headers=headers, auth=None)
 
             if response.status_code == 202:
                 JobRepository.add_job_log(
@@ -296,64 +366,150 @@ class JobService:
         """Submit a Spark job via YARN REST API"""
         try:
             job_id = job.id
+            user = job.user or 'hadoop'
+
+            hadoop_home = Config.HADOOP_HOME
+            spark_home = Config.SPARK_HOME
+
+            script_path = config.get('scriptPath', Config.SPARK_SCRIPT)
+            input_path = config.get('inputPath', Config.HADOOP_INPUT_DIR)
+            output_dir = config.get('outputPath', Config.HADOOP_OUTPUT_DIR)
+            top_n = config.get('topN', 5)
+
+            # Fix paths
+            if not input_path.startswith('hdfs://'):
+                if input_path.startswith('/'):
+                    input_path = f"hdfs://hadoop-namenode:9820{input_path}"
+                else:
+                    input_path = f"hdfs://hadoop-namenode:9820/user/hadoop/{input_path}"
+
+            if not output_dir.endswith("/"):
+                output_dir += "/"
+            if not output_dir.startswith('hdfs://'):
+                if output_dir.startswith('/'):
+                    output_dir = f"hdfs://hadoop-namenode:9820{output_dir}"
+                else:
+                    output_dir = f"hdfs://hadoop-namenode:9820/user/hadoop/{output_dir}"
+
+            output_path = f"{output_dir}{job_id}/"
+
+            # Build classpath for Spark
+            classpath = (
+                "./main.py:"
+                f"/opt/spark/jars/*:"
+                f"${{HADOOP_HOME}}/share/hadoop/common/*:"
+                f"${{HADOOP_HOME}}/share/hadoop/common/lib/*:"
+                f"${{HADOOP_HOME}}/share/hadoop/yarn/*:"
+                f"${{HADOOP_HOME}}/share/hadoop/yarn/lib/*:"
+                f"${{HADOOP_HOME}}/share/hadoop/hdfs/*:"
+                f"${{HADOOP_HOME}}/share/hadoop/hdfs/lib/*"
+            )
 
             spark_command = (
-                f"{{SPARK_HOME}}/bin/spark-submit "
+                # f"${{SPARK_HOME}}/bin/spark-submit "
+                f"/opt/spark/bin/spark-submit "
                 f"--master yarn "
-                f"--deploy-mode cluster "
-                f"--executor-memory {config.get('executorMemory', '1g')} "
-                f"--executor-cores {config.get('executorCores', 1)} "
-                f"--num-executors {config.get('numExecutors', 2)} "
+                f"--deploy-mode client "
+                #f"--executor-memory {config.get('executorMemory', '1g')} "
+                #f"--executor-cores {config.get('executorCores', 1)} "
+                #f"--num-executors {config.get('numExecutors', 2)} "
                 f"--name spark_job_{job_id[:8]} "
-                f"{config.get('scriptPath', Config.SPARK_SCRIPT)} "
-                f"--input {config.get('inputPath', Config.HADOOP_INPUT_DIR)} "
-                f"--output {config.get('outputPath', f'{Config.HADOOP_OUTPUT_DIR}/{job_id}')}"
+                f"./main.py "  # Local copy downloaded by YARN
+                f"{input_path} "
+                f"{output_path} "
+                f"{top_n} "
+            )
+
+            spark_command = (
+                f"python3 "
+                f"./main.py "
+                f"{input_path} "
+                f"{output_path} "
+                f"{top_n} "
             )
 
             if config.get('arguments'):
+                spark_command = spark_command.replace("&& exit 0 || exit 1", "")
                 spark_command += " " + " ".join(config['arguments'])
+                spark_command += " && exit 0 || exit 1"
 
             logger.info(f"Spark command: {spark_command}")
+            logger.info(f"User: {user}")
             JobRepository.add_job_log(job_id, f'Command: {spark_command}', 'INFO', 'APPLICATION')
 
-            new_app = YarnClient.cluster_new_application()
+            # Get new application ID
+            new_app = YarnClient.cluster_new_application(user=user)
             if isinstance(new_app, dict) and 'error' in new_app:
                 raise Exception(f"Failed to get new application ID: {new_app.get('error')}")
 
-            application_id = new_app.application_id if hasattr(new_app, 'application_id') else new_app.get(
-                'application-id')
+            application_id = new_app.application_id if hasattr(new_app, 'application_id') else new_app.get('application-id')
 
+            # Get max resource capabilities
+            max_memory = 1536
+            max_vcores = 4
+            if hasattr(new_app, 'maximum_resource_capability'):
+                max_res = new_app.maximum_resource_capability
+                if hasattr(max_res, 'memory'):
+                    max_memory = max_res.memory
+                if hasattr(max_res, 'vCores'):
+                    max_vcores = max_res.vCores
+
+            requested_memory = min(int(config.get('memory', 2048)), max_memory)
+            requested_vcores = min(int(config.get('vCores', 2)), max_vcores)
+
+            # Build request body
             request_body = {
                 "application-id": application_id,
                 "application-name": f"spark_{job_id[:8]}",
                 "queue": job.queue or "default",
                 "priority": job.priority or 0,
+                "user": user,
                 "am-container-spec": {
+                    "local-resources": {
+                        "entry": [
+                            {
+                                "key": "main.py",
+                                "value": {
+                                    "resource": f"{script_path}",
+                                    "type": "FILE",
+                                    "visibility": "APPLICATION",
+                                    "size": 0,
+                                    "timestamp": 1784468835688
+                                }
+                            }
+                        ]
+                    },
                     "commands": {
                         "command": spark_command
                     },
                     "environment": {
                         "entry": [
-                            {"key": "SPARK_HOME", "value": Config.SPARK_HOME},
-                            {"key": "HADOOP_CONF_DIR", "value": Config.HADOOP_CONF_DIR}
+                            {"key": "HADOOP_HOME", "value": hadoop_home},
+                            {"key": "HADOOP_CONF_DIR", "value": f"{hadoop_home}/etc/hadoop"},
+                            {"key": "SPARK_HOME", "value": spark_home},
+                            {"key": "JAVA_HOME", "value": "/usr/lib/jvm/java-8-openjdk-amd64"},
+                            {"key": "HADOOP_USER_NAME", "value": user},
+                            {"key": "PYSPARK_PYTHON", "value": "python3"},
+                            {"key": "PYTHONPATH", "value": f"{spark_home}/python:{spark_home}/python/lib/py4j-*.zip"},
+                            {"key": "PATH", "value": f"{hadoop_home}/bin:{spark_home}/bin:/usr/local/bin:/usr/bin:/bin"}
                         ]
                     }
                 },
-                "unmanaged-AM": False,
-                "max-app-attempts": 2,
-                "resource": {
-                    "memory": config.get('memory', 2048),
-                    "vCores": config.get('vCores', 2)
-                },
+                "max-app-attempts": 1,
                 "application-type": "SPARK",
-                "keep-containers-across-application-attempts": False,
                 "application-tags": {
-                    "tag": ["spark"]
+                    "tag": ["spark", job_id[:8]]
                 }
             }
 
-            url = f"{YarnClient.rm_url}/apps"
-            response = requests.post(url, json=request_body)
+            # Submit to YARN
+            url = f"{YarnClient.rm_url}/apps?user.name={user}"
+            headers = {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+            }
+
+            response = requests.post(url, json=request_body, headers=headers)
 
             if response.status_code == 202:
                 JobRepository.add_job_log(job_id, f'Submitted to YARN. App ID: {application_id}', 'INFO', 'SYSTEM')
@@ -364,7 +520,9 @@ class JobService:
                     'command': spark_command
                 }
             else:
-                return {'status': 'FAILED', 'error': response.text}
+                error_msg = response.text
+                logger.error(f"YARN submission failed: {error_msg}")
+                return {'status': 'FAILED', 'error': error_msg}
 
         except Exception as e:
             logger.error(f"Error submitting Spark job via YARN: {e}")
@@ -375,21 +533,51 @@ class JobService:
         """Submit a Python job via YARN REST API"""
         try:
             job_id = job.id
+            user = job.user or 'hadoop'
+
+            hadoop_home = Config.HADOOP_HOME
+
+            script_path = config.get('scriptPath', Config.PYTHON_NON_PARALLEL_SCRIPT)
+            input_path = config.get('inputPath', Config.HADOOP_INPUT_DIR)
+            output_dir = config.get('outputPath', Config.HADOOP_OUTPUT_DIR)
+            top_n = config.get('topN', 5)
+
+            # Fix paths
+            if not input_path.startswith('hdfs://'):
+                if input_path.startswith('/'):
+                    input_path = f"hdfs://hadoop-namenode:9820{input_path}"
+                else:
+                    input_path = f"hdfs://hadoop-namenode:9820/user/hadoop/{input_path}"
+
+            if not output_dir.endswith("/"):
+                output_dir += "/"
+            if not output_dir.startswith('hdfs://'):
+                if output_dir.startswith('/'):
+                    output_dir = f"hdfs://hadoop-namenode:9820{output_dir}"
+                else:
+                    output_dir = f"hdfs://hadoop-namenode:9820/user/hadoop/{output_dir}"
+
+            output_path = f"{output_dir}{job_id}/"
 
             python_command = (
                 f"python3 "
-                f"{config.get('scriptPath', Config.PYTHON_NON_PARALLEL_SCRIPT)} "
-                f"--input {config.get('inputPath', Config.HADOOP_INPUT_DIR)} "
-                f"--output {config.get('outputPath', f'{Config.HADOOP_OUTPUT_DIR}/{job_id}')}"
+                f"./main.py "
+                f"{input_path} "
+                f"{output_path} "
+                f"{top_n} "
             )
 
             if config.get('arguments'):
+                python_command = python_command.replace("&& exit 0 || exit 1", "")
                 python_command += " " + " ".join(config['arguments'])
+                python_command += " && exit 0 || exit 1"
 
             logger.info(f"Python command: {python_command}")
+            logger.info(f"User: {user}")
             JobRepository.add_job_log(job_id, f'Command: {python_command}', 'INFO', 'APPLICATION')
 
-            new_app = YarnClient.cluster_new_application()
+            # Get new application ID
+            new_app = YarnClient.cluster_new_application(user=user)
             if isinstance(new_app, dict) and 'error' in new_app:
                 raise Exception(f"Failed to get new application ID: {new_app.get('error')}")
 
@@ -401,29 +589,52 @@ class JobService:
                 "application-name": f"python_{job_id[:8]}",
                 "queue": job.queue or "default",
                 "priority": job.priority or 0,
+                "user": user,
                 "am-container-spec": {
+                    "local-resources": {
+                        "entry": [
+                            {
+                                "key": "main.py",
+                                "value": {
+                                    "resource": f"{script_path}",
+                                    "type": "FILE",
+                                    "visibility": "APPLICATION",
+                                    "size": 0,
+                                    "timestamp": 1784468864845
+                                }
+                            }
+                        ]
+                    },
                     "commands": {
                         "command": python_command
                     },
                     "environment": {
                         "entry": [
-                            {"key": "PYTHONPATH", "value": "/usr/local/lib/python3"},
-                            {"key": "HADOOP_CONF_DIR", "value": Config.HADOOP_CONF_DIR}
+                            {"key": "HADOOP_HOME", "value": hadoop_home},
+                            {"key": "HADOOP_CONF_DIR", "value": f"{hadoop_home}/etc/hadoop"},
+                            {"key": "JAVA_HOME", "value": "/usr/lib/jvm/java-8-openjdk-amd64"},
+                            {"key": "HADOOP_USER_NAME", "value": user},
+                            {"key": "PATH", "value": f"{hadoop_home}/bin:/usr/local/bin:/usr/bin:/bin"},
+                            {"key": "PYTHONPATH", "value": "/usr/local/lib/python3"}
                         ]
                     }
                 },
                 "unmanaged-AM": False,
                 "max-app-attempts": 1,
-                "resource": {
-                    "memory": 512,
-                    "vCores": 1
-                },
                 "application-type": "YARN",
-                "keep-containers-across-application-attempts": False
+                "application-tags": {
+                    "tag": ["python", job_id[:8]]
+                }
             }
 
-            url = f"{YarnClient.rm_url}/apps"
-            response = requests.post(url, json=request_body)
+            # Submit to YARN
+            url = f"{YarnClient.rm_url}/apps?user.name={user}"
+            headers = {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+            }
+
+            response = requests.post(url, json=request_body, headers=headers)
 
             if response.status_code == 202:
                 JobRepository.add_job_log(job_id, f'Submitted to YARN. App ID: {application_id}', 'INFO', 'SYSTEM')
@@ -434,7 +645,9 @@ class JobService:
                     'command': python_command
                 }
             else:
-                return {'status': 'FAILED', 'error': response.text}
+                error_msg = response.text
+                logger.error(f"YARN submission failed: {error_msg}")
+                return {'status': 'FAILED', 'error': error_msg}
 
         except Exception as e:
             logger.error(f"Error submitting Python job via YARN: {e}")

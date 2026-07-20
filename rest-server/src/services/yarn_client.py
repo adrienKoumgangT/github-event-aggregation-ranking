@@ -256,13 +256,13 @@ class YarnClient:
     # --- New Application API ---
 
     @classmethod
-    def cluster_new_application(cls) -> ClusterNewApplication | Dict[str, Any]:
+    def cluster_new_application(cls, user='hadoop') -> ClusterNewApplication | Dict[str, Any]:
         """With the New Application API, you can obtain an application-id which can then be used as part of
         the Cluster Submit Applications API to submit applications.
         The response also includes the maximum resource capabilities available on the cluster.
 
         This feature is currently in the alpha stage and may change in the future."""
-        url = f"{cls.rm_url}/apps/new-application"
+        url = f"{cls.rm_url}/apps/new-application?user.name={user}"
         msg_log = f"Cluster new application ({url})"
         logger.info(msg_log)
         try:

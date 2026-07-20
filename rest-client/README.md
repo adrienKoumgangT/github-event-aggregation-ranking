@@ -435,7 +435,7 @@ lsof -ti:3000 | xargs kill -9
 - Pagination for large datasets
 - Optimized re-renders with proper hooks usage
 
-## 📄 License
+## License
 
 This project is part of the GitHub Event Aggregation Ranking system.
 
